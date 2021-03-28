@@ -1,0 +1,115 @@
+#proposed structure of config. It is not used now
+
+include:
+    - acl.yaml
+    - conf/dps.yaml
+
+
+acls:
+    guest-protect:
+        #prevent ipv4 communication betwen Office/Guest networks
+        - rule:
+            dl_type: 0x800      # ipv4
+            ipv4_src: 172.16.3.0/24
+            ipv4_dst: 172.16.2.0/24
+            actions:
+                allow: False
+        #allow traffic in guest network
+         - rule:
+            dl_type: 0x800
+            ipv4_src: 172.16.3.0/24
+            ipv4_dst: 172.16.3.0/24
+            actions:
+                allow: True
+        #drop all other traffic
+        - rule:
+            actions:
+                allow: False
+
+    office-protect:
+        #prevent ipv4 communication betwen Office/Guest networks
+        - rule:
+            dl_type: 0x800      # ipv4
+            ipv4_src: 172.16.2.0/24
+            ipv4_dst: 172.16.3.0/24
+            actions:
+                allow: False
+        # Drop dhcp servers
+        - rule:
+            dl_type: 0x800      # ipv4
+            nw_proto: 17        # udp
+            udp_src: 67         # bootps
+            udp_dst: 68         # bootpc
+            actions:
+                allow: False
+        # Force DNS to custom DNS server
+        - rule:
+            dl_type: 0x800      # ipv4
+            nw_proto: 17        # udp
+            udp_dst: 53         # dns
+            actions:
+                output:
+                    set_fields:
+                        - eth_dst: "72:b8:3c:4c:dc:4d"
+                    port: "s1"  # s1 container
+        #allow all other traffic
+        - rule:
+            actions:
+                allow: True
+
+vlan:
+    office:
+        vid: 700
+    guest:
+        vid: 200
+        acls_in: [guest-protect]
+        acl_out: [office-protect]
+
+qos:
+    default:
+        #kbs
+        max-rate: 5000
+        min-rate": 1000
+    guest:
+        max-rate: 1000
+        min-rate: 200
+
+
+dps:
+    sw1:
+        #switch default
+        dp_id: 1
+        native_vlan: office
+        default_qos: default
+        router: True
+        border_ospf: True
+        ips:
+            - '172.16.1.1/26'
+            - '172.16.2.1/24'
+            - '172.16.3.1/24'
+        ports:
+            1:
+                state: 1
+                tagged_vlans: [office, guest]
+                native_vlan: 
+                acl_in: [office-protect]
+                acl_out: [guest-protect]
+            2:
+                native_vlan: office
+                qos: guest
+            3:
+                native_vlan: guest
+                qos: guest
+            5:
+                state: 0
+    sw2:
+        dp_id: 2
+        native_vlan: office
+        ports:
+            1:
+                tagged_vlans: [office, guest]
+            2:
+            3:
+            4:
+            5:
+                native_vlan: guest
