@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 
 from ryu.lib.packet import packet, ethernet, ether_types, ospf, ipv4
-from faucet.valve_packet import arp_reply, arp_request
 
 def add_flow(datapath, table_id, priority, match, actions, buffer_id=None, cookie = 4096, goto_table = None):
     ofproto = datapath.ofproto
@@ -65,14 +64,6 @@ def ospf_lsack(dp, mac_src, ip_src, out_ports, headers = None, router_id='0.0.0.
         print(p)
         p.serialize()
         packet_output(p, out_ports, dp)
-
-def make_arp( dp, out_ports, eth_src, src_ip, dst_ip, eth_dst='00:00:00:00:00:00', vid = None):
-    p = arp_request(eth_src=eth_src, vid = vid, src_ip=src_ip, dst_ip = dst_ip, eth_dst='00:00:00:00:00:00')
-    packet_output(p, out_ports, dp)
-
-def answ_arp(dp, out_ports, eth_src, src_ip, dst_ip, eth_dst, vid = None):
-    p = arp_reply(vid = vid, eth_src = eth_src, eth_dst = eth_dst, src_ip = src_ip, dst_ip = dst_ip)
-    packet_output(p, out_ports, dp)
 
 def packet_output(packet, out_ports, dp):
     ofproto = dp.ofproto

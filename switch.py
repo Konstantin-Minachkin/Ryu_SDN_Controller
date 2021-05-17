@@ -7,7 +7,7 @@ from ryu.controller.handler import set_ev_cls
 from ryu.lib.ofp_pktinfilter import packet_in_filter, RequiredTypeFilter
 from ryu.ofproto import ofproto_v1_3
 from ryu.ofproto import ofproto_v1_3_parser as parser
-from ryu.lib.packet import packet, ethernet, ether_types, arp, ipv4
+from ryu.lib.packet import packet, ethernet, ether_types, arp, ipv4, ipv6
 from array import array
 
 import helper_methods as util
@@ -28,18 +28,15 @@ class SimpleSwitch13(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     _CONTEXTS = {
-        'tables': table.Tables,
+        'tables': table.Tables
         }
-
-    _EVENTS = [c_ev.NewDp]
 
     def __init__(self, *args, **kwargs):
         super(SimpleSwitch13, self).__init__(*args, **kwargs)
         self.tables = kwargs['tables']
-        self.learn_host_timeout = 1 #нахрен нужен??
-        self.host_cache = HostCache(self.learn_host_timeout) #и надо ли вот эта срань?
+        self.host_cache = HostCache(1)
         self.cookie = 1
-        self.acl_table, self.aclT_id = self.tables.get_table('acl')
+        # self.acl_table, self.aclT_id = self.tables.get_table('acl')
         self.eth_src_table, self.eth_srcT_id = self.tables.get_table('eth_src')
         self.eth_dst_table, self.eth_dstT_id = self.tables.get_table('eth_dst')
         self.flood_table, self.floodT_id = self.tables.get_table('flood')
@@ -59,13 +56,22 @@ class SimpleSwitch13(app_manager.RyuApp):
         # Parse the packet
         pkt = packet.Packet(array('B', ev.msg.data))
         eth = pkt.get_protocols(ethernet.ethernet)[0]
+
+        if eth.ethertype == ether_types.ETH_TYPE_LLDP:
+            # ignore lldp packet
+            return
+        ip6 = pkt.get_protocol(ipv6.ipv6)
+        if ip6 is not None:
+            # ignore ipv6 packet
+            return
+
         # Ensure this host was not recently learned to avoid flooding the switch
         # with the learning messages if the learning was already in process.
         if not self.host_cache.is_new_host(dp.id, in_port, eth.src):
-            print('Host %s is learned in port %s dp=%s' % (eth.src, in_port, dp.id) )
+            # print('Host %s is learned in port %s dp=%s' % (eth.src, in_port, dp.id) )
             return
-        msgs = self.learn_source( dp=dp, port=in_port, eth_src=eth.src)
         
+        msgs = self.learn_source( dp=dp, port=in_port, eth_src=eth.src)
         util.send_msgs(dp, msgs)
 
 
@@ -78,8 +84,9 @@ class SimpleSwitch13(app_manager.RyuApp):
     
     def learn_source(self, dp, port, eth_src):
         "Learn the port associated with the source MAC"
-        
+
         msgs = self.unlearn_source(dp, eth_src)
+
         #"Add flow to mark the source learned at a specific port"
         match = parser.OFPMatch(eth_src=eth_src, in_port=port)
         inst = self.tables.goto_next_of(self.eth_src_table)
@@ -87,15 +94,14 @@ class SimpleSwitch13(app_manager.RyuApp):
 
         #"Add flow to forward packet sent to eth_dst to out_port"
         match = parser.OFPMatch(eth_dst=eth_src)
-        inst = [parser.OFPInstructionWriteMetadata(metadata = port, metadata_mask = 0xFFFF)]
+        inst = [parser.OFPInstructionWriteMetadata(metadata = port, metadata_mask = 0xFFFFFFFF)]
         inst += self.tables.goto_next_of(self.eth_dst_table)
         msgs += [self.make_message (dp, self.eth_dstT_id, PRIORITY_DEF, match, inst, idle_timeout=IDLE_TIME)]
-
+       
         #write this port to flood
         match = parser.OFPMatch(metadata=port)
         actions = [parser.OFPActionOutput(port)]
         msgs += [self.make_message (dp, self.floodT_id, PRIORITY_DEF, match, actions = actions, idle_timeout=IDLE_TIME)]
-        
         
         return msgs
 
@@ -125,8 +131,8 @@ class SimpleSwitch13(app_manager.RyuApp):
         ## TABLE_ACL
         # Add a low priority table-miss flow to forward to the switch table.
         # Other modules can add higher priority flows as needed.
-        inst = self.tables.goto_next_of(self.acl_table)
-        msgs += [self.make_message (dp, self.aclT_id, PRIORITY_MIN, parser.OFPMatch(), inst)]
+        # inst = self.tables.goto_next_of(self.acl_table)
+        # msgs += [self.make_message (dp, self.aclT_id, PRIORITY_MIN, parser.OFPMatch(), inst)]
 
         ## TABLE_L2_SWITCH
         # Drop certain packets that should not be broadcast or processed
@@ -151,6 +157,7 @@ class SimpleSwitch13(app_manager.RyuApp):
         # prevent a flood event while the controller relearns the address.
         actions = [parser.OFPActionOutput(ofp.OFPP_CONTROLLER, max_len=256)]
         inst = self.tables.goto_next_of(self.eth_src_table)
+        # inst = self.tables.goto_this(self.eth_dstT_id) #чтобы перескакивать таблицы между eth src и eth dst
         msgs += [self.make_message (dp, self.eth_srcT_id, PRIORITY_MIN, parser.OFPMatch(), inst, actions)]
 
         # TABLE_ETH_DST
@@ -160,53 +167,31 @@ class SimpleSwitch13(app_manager.RyuApp):
          
         #TABLE_FLOOD
         #если vlan app активирован, то это можно убрать
-        # Flood multicast (Mimic Faucet)
-        flood_addrs = [
-            ('01:80:c2:00:00:00', '01:80:c2:00:00:00'), # 802.x
-            ('01:00:5e:00:00:00', 'ff:ff:ff:00:00:00'), # IPv4 multicast
-            ('33:33:00:00:00:00', 'ff:ff:00:00:00:00'), # IPv6 multicast
-        ]
-        actions = [parser.OFPActionOutput(ofp.OFPP_FLOOD)]
-        for eth_dst in flood_addrs:
-            match = parser.OFPMatch(eth_dst=eth_dst)
-            msgs += [self.make_message (dp, self.floodT_id, PRIORITY_MAX, match, actions = actions)]
+        # # Flood multicast (Mimic Faucet)
+        # flood_addrs = [
+        #     ('01:80:c2:00:00:00', '01:80:c2:00:00:00'), # 802.x
+        #     ('01:00:5e:00:00:00', 'ff:ff:ff:00:00:00'), # IPv4 multicast
+        #     ('33:33:00:00:00:00', 'ff:ff:00:00:00:00'), # IPv6 multicast
+        # ]
+        # actions = [parser.OFPActionOutput(ofp.OFPP_FLOOD)]
+        # for eth_dst in flood_addrs:
+        #     match = parser.OFPMatch(eth_dst=eth_dst)
+        #     msgs += [self.make_message (dp, self.floodT_id, PRIORITY_MIN, match, actions = actions)]
 
         # Ethernet broadcast
-        match = parser.OFPMatch(eth_dst='ff:ff:ff:ff:ff:ff')
-        msgs += [self.make_message (dp, self.floodT_id, PRIORITY_MIN, match, actions = actions)]
+        #выключен тк включен модуль Vlan
+        # match = parser.OFPMatch(eth_dst='ff:ff:ff:ff:ff:ff')
+        # msgs += [self.make_message (dp, self.floodT_id, PRIORITY_MIN, match, actions = actions)]
 
-        # if nothing in table found - flood
-        msgs += [self.make_message (dp, self.floodT_id, PRIORITY_MIN, parser.OFPMatch(), actions = actions)]
+        # if nothing in table found - не flood
+        # msgs += [self.make_message (dp, self.floodT_id, PRIORITY_MIN, parser.OFPMatch(), actions = actions)]
 
         return msgs
 
 
     def make_message (self, datapath, table_id, priority, match, instructions = None, actions = None, buffer_id=None, command = None, idle_timeout = 0, hard_timeout = 0):
-        ofproto = datapath.ofproto
-        parser = datapath.ofproto_parser
-        inst = []
-        if actions is not None:
-            inst += [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
-        if instructions is not None:
-            inst += instructions
-        
-        if command is None:
-            command = ofproto.OFPFC_ADD
-        if buffer_id:
-            msg = parser.OFPFlowMod(datapath=datapath, cookie=self.cookie, table_id=table_id, priority=priority, buffer_id=buffer_id, match=match, instructions=inst, command = command, idle_timeout = idle_timeout, hard_timeout = hard_timeout)
-        else:
-            msg = parser.OFPFlowMod(datapath=datapath, cookie=self.cookie, table_id=table_id,priority=priority, match=match, instructions=inst, command = command, idle_timeout = idle_timeout, hard_timeout = hard_timeout)
-        return msg
+        return util.make_message (datapath, self.cookie, table_id, priority, match, instructions, actions, buffer_id, command, idle_timeout, hard_timeout)
 
-    
+        
     def del_flow(self, dp, table_id = None, match = None, out_port=None, out_group=None):
-        parser = dp.ofproto_parser
-        ofp = dp.ofproto
-        if out_port is None:
-            out_port = ofp.OFPP_ANY
-        if out_group is None:
-            out_group = ofp.OFPG_ANY
-        if table_id is None:
-            table_id = ofp.OFPTT_ALL
-        msg = parser.OFPFlowMod(cookie=self.cookie, datapath=dp,  table_id=table_id, command=ofp.OFPFC_DELETE, out_port=out_port, out_group=out_group, match = match)
-        return msg
+        return util.del_flow(dp, self.cookie, table_id, match, out_port, out_group)

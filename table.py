@@ -13,7 +13,7 @@ class Tables:
         i = []
         for t in self.tables:
             i.append(str(t))
-        return ''.join(i)
+        return '\n'.join(i)
 
     def get_table(self, name):
         i = -1
@@ -61,10 +61,15 @@ class Tables:
             return [Table.goto_table(self.next_table_id(table.name))]
         else:
             return [Table.goto_table(self.table_id(table.next_table_name))]
-
+    
     def goto_next_by_name(self, table_name):
         """Add goto next table instruction."""
         return [Table.goto_table(self.next_table_id(table_name))]
+
+    
+    def goto_this(self, table_id):
+        """Add goto next table instruction."""
+        return [Table.goto_table(table_id)]
 
 
 class Table:

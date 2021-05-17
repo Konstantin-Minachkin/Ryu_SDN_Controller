@@ -26,7 +26,7 @@ class HostCache(object):
 
     def __init__(self, timeout):
         self.cache = {}
-        self.logger = logging.getLogger("SS2HostCache")
+        self.logger = logging.getLogger("SwHostCache")
         # The amount of time that the controller ignores packets matching a recently
         # learned dpid/port/mac combination. This is used to prevent the controller
         # application from processing a large number of packets forwarded to the
@@ -47,6 +47,7 @@ class HostCache(object):
         self.clean_entries()
         entry = self.cache.get((dpid, port, mac), None)
         if entry != None:
+            entry.timestamp = time.time()
             entry.counter += 1
             return False
 
@@ -63,7 +64,5 @@ class HostCache(object):
             if host.timestamp + self.timeout >= curtime:
                 _cleaned_cache[(host.dpid, host.port, host.mac)] = host
             else:
-                self.logger.debug("Unlearned %s, %s, %s after %s hits",
-                                  host.dpid, host.port, host.mac, host.counter)
-
+                self.logger.debug("Unlearned %s, %s, %s after %s hits", host.dpid, host.port, host.mac, host.counter)
         self.cache = _cleaned_cache

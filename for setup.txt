@@ -1,0 +1,2 @@
+#запуск
+ryu-manager --observe-links myK/main.py myK/background.py myK/vlanApp.py myK/switch.py myK/l3App.py ryu/ryu/app/ofctl_rest.py myK/ospfApp.py myK/StpApp.py myK/aclApp.py
